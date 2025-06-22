@@ -3,15 +3,12 @@
 import requests
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
-import pytz
 
 # === Configuration ===
 API_KEY = st.secrets["API_KEY"]  # Stored securely in Streamlit Cloud
 REGION = 'eu'
 MARKET = 'h2h'
 ODDS_FORMAT = 'decimal'
-NZ_TZ = pytz.timezone("Pacific/Auckland")
 
 # === Helper Functions ===
 def fetch_all_sports():
@@ -52,17 +49,6 @@ def find_arbs(odds_data, sport_name):
             else:
                 team_names = ' vs '.join(team_names)
 
-            if event.get('commence_time') is None:
-                event_time_display = "LIVE"
-                countdown = "Ongoing"
-            else:
-                event_utc = datetime.fromisoformat(event['commence_time'].replace('Z', '+00:00'))
-                event_nz = event_utc.astimezone(NZ_TZ)
-                now_nz = datetime.now(NZ_TZ)
-                event_time_display = event_nz.strftime("%Y-%m-%d %H:%M NZT")
-                delta = event_nz - now_nz
-                countdown = str(delta).split('.')[0] if delta.total_seconds() > 0 else "Ongoing"
-
             for bookmaker in event['bookmakers']:
                 for market in bookmaker.get('markets', []):
                     if market.get('key') != 'h2h':
@@ -87,16 +73,13 @@ def find_arbs(odds_data, sport_name):
                 arbs.append({
                     'Sport': sport_name,
                     'Match': team_names,
-                    'Start Time': event_time_display,
-                    'Countdown': countdown,
                     'Team 1': list(outcomes.keys())[0],
                     'Odds 1': list(outcomes.values())[0]['price'],
                     'Bookie 1': list(outcomes.values())[0]['bookmaker'],
                     'Team 2': list(outcomes.keys())[1],
                     'Odds 2': list(outcomes.values())[1]['price'],
                     'Bookie 2': list(outcomes.values())[1]['bookmaker'],
-                    'Arb Margin (%)': round(arb_margin, 2),
-                    'Highlight': event_time_display == "LIVE"
+                    'Arb Margin (%)': round(arb_margin, 2)
                 })
         except Exception as e:
             st.warning(f"Skipped a match due to error: {e}")
@@ -118,18 +101,13 @@ if st.button("🔍 Scan ALL Sports for Arbitrage Opportunities"):
         sports = fetch_all_sports()
         all_arbs = []
         raw_odds_summary = []
-        event_count_by_sport = {}
 
         for sport in sports:
             odds_data = fetch_odds_for_sport(sport['key'])
-            event_count_by_sport[sport['title']] = len(odds_data)
             raw_odds_summary.extend(odds_data)
             arbs = find_arbs(odds_data, sport.get('title', sport['key']))
             filtered = [a for a in arbs if a['Arb Margin (%)'] >= min_margin]
             all_arbs.extend(filtered)
-
-        st.markdown("### 📊 Event Count by Sport")
-        st.json(event_count_by_sport)
 
         if show_raw:
             st.subheader("📦 Raw Odds Data")
@@ -138,13 +116,6 @@ if st.button("🔍 Scan ALL Sports for Arbitrage Opportunities"):
         if not all_arbs:
             st.info("No arbitrage opportunities found across all sports.")
         else:
-            df = pd.DataFrame(all_arbs).sort_values(by='Start Time')
+            df = pd.DataFrame(all_arbs)
             st.success(f"Found {len(all_arbs)} arbitrage opportunities across all sports!")
-
-            def highlight_live(row):
-                return ['background-color: #ffd6d6' if row['Highlight'] else '' for _ in row]
-
-            st.dataframe(
-                df.drop(columns=['Highlight']).style.apply(highlight_live, axis=1),
-                use_container_width=True
-            )
+            st.dataframe(df, use_container_width=True)
