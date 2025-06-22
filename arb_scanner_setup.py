@@ -1,4 +1,4 @@
-# 🔍 Arbitrage Betting Scanner (Web-Scraping Version - Free & Legal)
+# 🔍 Arbitrage Betting Scanner (Updated Web Scraping Version)
 
 import streamlit as st
 import pandas as pd
@@ -11,11 +11,17 @@ import re
 # === Config ===
 NZ_TZ = pytz.timezone("Pacific/Auckland")
 HEADERS = {"User-Agent": "Mozilla/5.0"}
-ODDSPORTAL_URL = "https://www.oddsportal.com/matches/"
+SPORT_URLS = {
+    "soccer": "https://www.oddsportal.com/football/",
+    "tennis": "https://www.oddsportal.com/tennis/",
+    "basketball": "https://www.oddsportal.com/basketball/",
+    "mma": "https://www.oddsportal.com/mma/",
+    "baseball": "https://www.oddsportal.com/baseball/"
+}
 
 # === Streamlit Setup ===
 st.set_page_config(page_title="Free Arbitrage Scanner", layout="wide")
-st.title("📈 Free Arbitrage Betting Scanner (OddsPortal Live)")
+st.title("📈 Free Arbitrage Betting Scanner (Multi-Sport Snapshot)")
 
 col1, col2 = st.columns([3, 1])
 with col1:
@@ -23,65 +29,64 @@ with col1:
 with col2:
     refresh = st.checkbox("🔄 Refresh Odds", value=True)
 
-@st.cache_data(ttl=600)
-def scrape_oddsportal():
-    url = ODDSPORTAL_URL
-    try:
-        response = requests.get(url, headers=HEADERS)
-        soup = BeautifulSoup(response.content, "html.parser")
+@st.cache_data(ttl=900)
+def scrape_all_sports():
+    all_events = []
+    now_nz = datetime.now(NZ_TZ)
 
-        # Find match rows
-        match_rows = soup.find_all("div", class_=re.compile("^match-row"))
-        events = []
-        for row in match_rows:
-            try:
-                teams = row.find("div", class_="match-name").text.strip()
-                time_raw = row.find("div", class_="match-time").text.strip()
-                bookie_odds = row.find_all("div", class_="odds")
+    for sport, url in SPORT_URLS.items():
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=10)
+            soup = BeautifulSoup(resp.content, "html.parser")
 
-                if not teams or not bookie_odds:
+            matches = soup.select("div.eventRow")
+            for match in matches:
+                try:
+                    name_tag = match.select_one("div.participantBox span")
+                    if not name_tag:
+                        continue
+                    name = name_tag.get_text(strip=True)
+
+                    odds_tags = match.select("div.odds span.oddsValue")
+                    odds = [float(odds.get_text(strip=True)) for odds in odds_tags if re.match(r"^[0-9]+\.[0-9]+$", odds.get_text(strip=True))]
+                    if len(odds) < 2:
+                        continue
+
+                    time_tag = match.select_one("div.eventTime")
+                    if time_tag and re.match(r"\d{2}:\d{2}", time_tag.get_text(strip=True)):
+                        hour, minute = map(int, time_tag.get_text(strip=True).split(":"))
+                        start_dt = now_nz.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                        if start_dt < now_nz:
+                            start_dt += timedelta(days=1)
+                    else:
+                        start_dt = now_nz
+
+                    inv_sum = sum(1 / o for o in odds[:2])
+                    arb_margin = (1 - inv_sum) * 100 if inv_sum < 1 else 0
+
+                    all_events.append({
+                        "Match": name,
+                        "Sport": sport.title(),
+                        "Odds 1": odds[0],
+                        "Odds 2": odds[1],
+                        "Arb Margin (%)": round(arb_margin, 2),
+                        "Start Time (NZT)": start_dt.strftime("%Y-%m-%d %H:%M"),
+                        "Countdown": "LIVE" if start_dt <= now_nz else str(start_dt - now_nz).split(".")[0],
+                        "Live": start_dt <= now_nz
+                    })
+                except:
                     continue
+        except:
+            continue
 
-                odds = [float(od.text.strip()) for od in bookie_odds if re.match(r"^[0-9]+\.[0-9]+$", od.text.strip())]
-                if len(odds) < 2:
-                    continue
-
-                # Convert to NZ time estimate (not always shown precisely)
-                now_nz = datetime.now(NZ_TZ)
-                if ":" in time_raw:
-                    hour, minute = map(int, time_raw.split(":"))
-                    start_dt = now_nz.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                    if start_dt < now_nz:
-                        start_dt += timedelta(days=1)
-                else:
-                    start_dt = now_nz  # Assume live
-
-                inv_sum = sum(1/o for o in odds[:2])
-                arb_margin = (1 - inv_sum) * 100 if inv_sum < 1 else 0
-
-                events.append({
-                    "Match": teams,
-                    "Odds 1": odds[0],
-                    "Odds 2": odds[1],
-                    "Arb Margin (%)": round(arb_margin, 2),
-                    "Start Time (NZT)": start_dt.strftime("%Y-%m-%d %H:%M"),
-                    "Countdown": "LIVE" if start_dt <= now_nz else str(start_dt - now_nz).split(".")[0],
-                    "Live": start_dt <= now_nz
-                })
-            except:
-                continue
-
-        return events
-    except Exception as e:
-        st.error(f"Failed to scrape odds: {e}")
-        return []
+    return all_events
 
 # === Main Logic ===
 if refresh:
-    with st.spinner("Scraping live odds from OddsPortal..."):
-        data = scrape_oddsportal()
+    with st.spinner("Scraping odds from multiple sports (OddsPortal)..."):
+        data = scrape_all_sports()
         if not data:
-            st.warning("No events found. OddsPortal may be offline or layout changed.")
+            st.warning("No events found. OddsPortal may be offline or blocking access.")
         else:
             df = pd.DataFrame(data)
             df = df[df["Arb Margin (%)"] >= min_margin]
@@ -93,5 +98,5 @@ if refresh:
                 def highlight_live(row):
                     return ["background-color: #ffdddd" if row.Live else "" for _ in row]
 
-                st.success(f"Found {len(df)} events with potential arbitrage!")
+                st.success(f"Found {len(df)} arbitrage opportunities across sports!")
                 st.dataframe(df.style.apply(highlight_live, axis=1), use_container_width=True)
