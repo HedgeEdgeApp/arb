@@ -3,6 +3,7 @@
 import requests
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 
 # === Configuration ===
 API_KEY = st.secrets["API_KEY"]  # Stored securely in Streamlit Cloud
@@ -49,6 +50,8 @@ def find_arbs(odds_data, sport_name):
             else:
                 team_names = ' vs '.join(team_names)
 
+            event_time = "LIVE" if event.get('commence_time') is None else datetime.fromisoformat(event['commence_time'].replace('Z', '+00:00')).strftime("%Y-%m-%d %H:%M UTC")
+
             for bookmaker in event['bookmakers']:
                 for market in bookmaker.get('markets', []):
                     if market.get('key') != 'h2h':
@@ -73,6 +76,7 @@ def find_arbs(odds_data, sport_name):
                 arbs.append({
                     'Sport': sport_name,
                     'Match': team_names,
+                    'Start Time': event_time,
                     'Team 1': list(outcomes.keys())[0],
                     'Odds 1': list(outcomes.values())[0]['price'],
                     'Bookie 1': list(outcomes.values())[0]['bookmaker'],
@@ -119,4 +123,3 @@ if st.button("🔍 Scan ALL Sports for Arbitrage Opportunities"):
             df = pd.DataFrame(all_arbs)
             st.success(f"Found {len(all_arbs)} arbitrage opportunities across all sports!")
             st.dataframe(df, use_container_width=True)
-
