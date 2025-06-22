@@ -143,3 +143,4 @@ if st.button("🔍 Scan ALL Sports for Arbitrage Opportunities"):
                 df.drop(columns=['Highlight']).style.apply(highlight_live, axis=1),
                 use_container_width=True
             )
+ 
