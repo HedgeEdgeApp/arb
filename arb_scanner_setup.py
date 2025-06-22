@@ -6,14 +6,22 @@ import pandas as pd
 
 # === Configuration ===
 API_KEY = st.secrets["API_KEY"]  # Stored securely in Streamlit Cloud
-DEFAULT_SPORT = 'tennis'
-REGION = 'eu'
+REGION = 'eu'  # Accessing all available free bookmakers in EU region
 MARKET = 'h2h'
 ODDS_FORMAT = 'decimal'
 
 # === Helper Functions ===
-def fetch_odds(sport):
-    url = f'https://api.the-odds-api.com/v4/sports/{sport}/odds/'
+def fetch_all_sports():
+    url = 'https://api.the-odds-api.com/v4/sports/'
+    params = {'apiKey': API_KEY}
+    response = requests.get(url, params=params)
+    if response.status_code != 200:
+        st.error(f"API Error fetching sports: {response.status_code} - {response.text}")
+        return []
+    return response.json()
+
+def fetch_odds_for_sport(sport_key):
+    url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds/'
     params = {
         'regions': REGION,
         'markets': MARKET,
@@ -22,7 +30,6 @@ def fetch_odds(sport):
     }
     response = requests.get(url, params=params)
     if response.status_code != 200:
-        st.error(f"API Error: {response.status_code} - {response.text}")
         return []
     return response.json()
 
@@ -58,23 +65,35 @@ def find_arbs(odds_data):
     return arbs
 
 # === Streamlit UI ===
+st.set_page_config(page_title="Arbitrage Scanner", layout="wide")
 st.title("📈 Arbitrage Betting Scanner")
 
-sport = st.selectbox("Select a sport:", [
-    'tennis', 'basketball_nba', 'soccer_epl', 'mma_mixed_martial_arts', 'baseball_mlb', 'americanfootball_nfl'
-], index=0)
+col1, col2 = st.columns([3, 1])
+with col1:
+    min_margin = st.slider("Minimum Arbitrage Margin (%)", 0.0, 10.0, 0.5, 0.1)
+with col2:
+    show_raw = st.checkbox("Show raw odds data")
 
-min_margin = st.slider("Minimum Arbitrage Margin (%)", 0.0, 10.0, 0.5, 0.1)
+if st.button("🔍 Scan ALL Sports for Arbitrage Opportunities"):
+    with st.spinner("Fetching all sports and odds data..."):
+        sports = fetch_all_sports()
+        all_arbs = []
+        raw_odds_summary = []
 
-if st.button("🔍 Scan for Arbitrage Opportunities"):
-    with st.spinner("Fetching odds and checking for arbitrage..."):
-        data = fetch_odds(sport)
-        arbs = find_arbs(data)
-        filtered = [a for a in arbs if a['Arb Margin (%)'] >= min_margin]
+        for sport in sports:
+            odds_data = fetch_odds_for_sport(sport['key'])
+            raw_odds_summary.extend(odds_data)
+            arbs = find_arbs(odds_data)
+            filtered = [a for a in arbs if a['Arb Margin (%)'] >= min_margin]
+            all_arbs.extend(filtered)
 
-        if not filtered:
-            st.info("No arbitrage opportunities found.")
+        if show_raw:
+            st.subheader("📦 Raw Odds Data")
+            st.json(raw_odds_summary)
+
+        if not all_arbs:
+            st.info("No arbitrage opportunities found across all sports.")
         else:
-            df = pd.DataFrame(filtered)
-            st.success(f"Found {len(filtered)} arbitrage opportunities!")
+            df = pd.DataFrame(all_arbs)
+            st.success(f"Found {len(all_arbs)} arbitrage opportunities across all sports!")
             st.dataframe(df, use_container_width=True)
