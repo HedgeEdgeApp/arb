@@ -1,121 +1,97 @@
-# Arbitrage Betting Scanner (Streamlit UI)
+# 🔍 Arbitrage Betting Scanner (Web-Scraping Version - Free & Legal)
 
-import requests
 import streamlit as st
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
+import pytz
+import re
 
-# === Configuration ===
-API_KEY = st.secrets["API_KEY"]  # Stored securely in Streamlit Cloud
-REGION = 'us,uk,eu,au'
-MARKET = 'h2h'
-ODDS_FORMAT = 'decimal'
+# === Config ===
+NZ_TZ = pytz.timezone("Pacific/Auckland")
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+ODDSPORTAL_URL = "https://www.oddsportal.com/matches/"
 
-# === Helper Functions ===
-def fetch_all_sports():
-    url = 'https://api.the-odds-api.com/v4/sports/'
-    params = {'apiKey': API_KEY}
-    response = requests.get(url, params=params)
-    if response.status_code != 200:
-        st.error(f"API Error fetching sports: {response.status_code} - {response.text}")
-        return []
-    return response.json()
-
-def fetch_odds_for_sport(sport_key):
-    url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds/'
-    params = {
-        'regions': REGION,
-        'markets': MARKET,
-        'oddsFormat': ODDS_FORMAT,
-        'apiKey': API_KEY
-    }
-    response = requests.get(url, params=params)
-    if response.status_code != 200:
-        return []
-    return response.json()
-
-def find_arbs(odds_data, sport_name):
-    arbs = []
-    for event in odds_data:
-        try:
-            if 'bookmakers' not in event or not event['bookmakers']:
-                continue
-
-            outcomes = {}
-            team_names = event.get('teams')
-            if not team_names:
-                home = event.get('home_team', '')
-                away = event.get('away_team', '')
-                team_names = f"{home} vs {away}" if home or away else "Unknown Match"
-            else:
-                team_names = ' vs '.join(team_names)
-
-            for bookmaker in event['bookmakers']:
-                for market in bookmaker.get('markets', []):
-                    if market.get('key') != 'h2h':
-                        continue
-                    for outcome in market.get('outcomes', []):
-                        name = outcome.get('name')
-                        price = outcome.get('price')
-                        if not name or not price:
-                            continue
-                        if name not in outcomes or price > outcomes[name]['price']:
-                            outcomes[name] = {
-                                'price': price,
-                                'bookmaker': bookmaker.get('title', 'Unknown')
-                            }
-
-            if len(outcomes) != 2:
-                continue
-
-            inv_sum = sum(1 / outcome['price'] for outcome in outcomes.values())
-            if inv_sum < 1:
-                arb_margin = (1 - inv_sum) * 100
-                arbs.append({
-                    'Sport': sport_name,
-                    'Match': team_names,
-                    'Team 1': list(outcomes.keys())[0],
-                    'Odds 1': list(outcomes.values())[0]['price'],
-                    'Bookie 1': list(outcomes.values())[0]['bookmaker'],
-                    'Team 2': list(outcomes.keys())[1],
-                    'Odds 2': list(outcomes.values())[1]['price'],
-                    'Bookie 2': list(outcomes.values())[1]['bookmaker'],
-                    'Arb Margin (%)': round(arb_margin, 2)
-                })
-        except Exception as e:
-            st.warning(f"Skipped a match due to error: {e}")
-            continue
-    return arbs
-
-# === Streamlit UI ===
-st.set_page_config(page_title="Arbitrage Scanner", layout="wide")
-st.title("📈 Arbitrage Betting Scanner")
+# === Streamlit Setup ===
+st.set_page_config(page_title="Free Arbitrage Scanner", layout="wide")
+st.title("📈 Free Arbitrage Betting Scanner (OddsPortal Live)")
 
 col1, col2 = st.columns([3, 1])
 with col1:
     min_margin = st.slider("Minimum Arbitrage Margin (%)", 0.0, 10.0, 0.5, 0.1)
 with col2:
-    show_raw = st.checkbox("Show raw odds data")
+    refresh = st.checkbox("🔄 Refresh Odds", value=True)
 
-if st.button("🔍 Scan ALL Sports for Arbitrage Opportunities"):
-    with st.spinner("Fetching all sports and odds data..."):
-        sports = fetch_all_sports()
-        all_arbs = []
-        raw_odds_summary = []
+@st.cache_data(ttl=600)
+def scrape_oddsportal():
+    url = ODDSPORTAL_URL
+    try:
+        response = requests.get(url, headers=HEADERS)
+        soup = BeautifulSoup(response.content, "html.parser")
 
-        for sport in sports:
-            odds_data = fetch_odds_for_sport(sport['key'])
-            raw_odds_summary.extend(odds_data)
-            arbs = find_arbs(odds_data, sport.get('title', sport['key']))
-            filtered = [a for a in arbs if a['Arb Margin (%)'] >= min_margin]
-            all_arbs.extend(filtered)
+        # Find match rows
+        match_rows = soup.find_all("div", class_=re.compile("^match-row"))
+        events = []
+        for row in match_rows:
+            try:
+                teams = row.find("div", class_="match-name").text.strip()
+                time_raw = row.find("div", class_="match-time").text.strip()
+                bookie_odds = row.find_all("div", class_="odds")
 
-        if show_raw:
-            st.subheader("📦 Raw Odds Data")
-            st.json(raw_odds_summary)
+                if not teams or not bookie_odds:
+                    continue
 
-        if not all_arbs:
-            st.info("No arbitrage opportunities found across all sports.")
+                odds = [float(od.text.strip()) for od in bookie_odds if re.match(r"^[0-9]+\.[0-9]+$", od.text.strip())]
+                if len(odds) < 2:
+                    continue
+
+                # Convert to NZ time estimate (not always shown precisely)
+                now_nz = datetime.now(NZ_TZ)
+                if ":" in time_raw:
+                    hour, minute = map(int, time_raw.split(":"))
+                    start_dt = now_nz.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                    if start_dt < now_nz:
+                        start_dt += timedelta(days=1)
+                else:
+                    start_dt = now_nz  # Assume live
+
+                inv_sum = sum(1/o for o in odds[:2])
+                arb_margin = (1 - inv_sum) * 100 if inv_sum < 1 else 0
+
+                events.append({
+                    "Match": teams,
+                    "Odds 1": odds[0],
+                    "Odds 2": odds[1],
+                    "Arb Margin (%)": round(arb_margin, 2),
+                    "Start Time (NZT)": start_dt.strftime("%Y-%m-%d %H:%M"),
+                    "Countdown": "LIVE" if start_dt <= now_nz else str(start_dt - now_nz).split(".")[0],
+                    "Live": start_dt <= now_nz
+                })
+            except:
+                continue
+
+        return events
+    except Exception as e:
+        st.error(f"Failed to scrape odds: {e}")
+        return []
+
+# === Main Logic ===
+if refresh:
+    with st.spinner("Scraping live odds from OddsPortal..."):
+        data = scrape_oddsportal()
+        if not data:
+            st.warning("No events found. OddsPortal may be offline or layout changed.")
         else:
-            df = pd.DataFrame(all_arbs)
-            st.success(f"Found {len(all_arbs)} arbitrage opportunities across all sports!")
-            st.dataframe(df, use_container_width=True)
+            df = pd.DataFrame(data)
+            df = df[df["Arb Margin (%)"] >= min_margin]
+            df = df.sort_values(by=["Live", "Start Time (NZT)"], ascending=[False, True])
+
+            if df.empty:
+                st.info("No arbitrage opportunities found above the selected margin.")
+            else:
+                def highlight_live(row):
+                    return ["background-color: #ffdddd" if row.Live else "" for _ in row]
+
+                st.success(f"Found {len(df)} events with potential arbitrage!")
+                st.dataframe(df.style.apply(highlight_live, axis=1), use_container_width=True)
