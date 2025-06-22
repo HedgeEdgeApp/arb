@@ -33,7 +33,7 @@ def fetch_odds_for_sport(sport_key):
         return []
     return response.json()
 
-def find_arbs(odds_data):
+def find_arbs(odds_data, sport_name):
     arbs = []
     for event in odds_data:
         try:
@@ -71,6 +71,7 @@ def find_arbs(odds_data):
             if inv_sum < 1:
                 arb_margin = (1 - inv_sum) * 100
                 arbs.append({
+                    'Sport': sport_name,
                     'Match': team_names,
                     'Team 1': list(outcomes.keys())[0],
                     'Odds 1': list(outcomes.values())[0]['price'],
@@ -104,7 +105,7 @@ if st.button("🔍 Scan ALL Sports for Arbitrage Opportunities"):
         for sport in sports:
             odds_data = fetch_odds_for_sport(sport['key'])
             raw_odds_summary.extend(odds_data)
-            arbs = find_arbs(odds_data)
+            arbs = find_arbs(odds_data, sport.get('title', sport['key']))
             filtered = [a for a in arbs if a['Arb Margin (%)'] >= min_margin]
             all_arbs.extend(filtered)
 
@@ -118,3 +119,4 @@ if st.button("🔍 Scan ALL Sports for Arbitrage Opportunities"):
             df = pd.DataFrame(all_arbs)
             st.success(f"Found {len(all_arbs)} arbitrage opportunities across all sports!")
             st.dataframe(df, use_container_width=True)
+
