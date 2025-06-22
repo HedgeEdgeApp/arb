@@ -6,7 +6,7 @@ import pandas as pd
 
 # === Configuration ===
 API_KEY = st.secrets["API_KEY"]  # Stored securely in Streamlit Cloud
-REGION = 'eu'  # Accessing all available free bookmakers in EU region
+REGION = 'eu'
 MARKET = 'h2h'
 ODDS_FORMAT = 'decimal'
 
@@ -36,20 +36,37 @@ def fetch_odds_for_sport(sport_key):
 def find_arbs(odds_data):
     arbs = []
     for event in odds_data:
-        outcomes = {}
-        team_names = event.get('teams') or event.get('home_team', '') + ' vs ' + event.get('away_team', '')
-        for bookmaker in event.get('bookmakers', []):
-            for market in bookmaker.get('markets', []):
-                if market['key'] != 'h2h':
-                    continue
-                for outcome in market['outcomes']:
-                    name = outcome['name']
-                    if name not in outcomes or outcome['price'] > outcomes[name]['price']:
-                        outcomes[name] = {
-                            'price': outcome['price'],
-                            'bookmaker': bookmaker['title']
-                        }
-        if len(outcomes) == 2:
+        try:
+            if 'bookmakers' not in event or not event['bookmakers']:
+                continue
+
+            outcomes = {}
+            team_names = event.get('teams')
+            if not team_names:
+                home = event.get('home_team', '')
+                away = event.get('away_team', '')
+                team_names = f"{home} vs {away}" if home or away else "Unknown Match"
+            else:
+                team_names = ' vs '.join(team_names)
+
+            for bookmaker in event['bookmakers']:
+                for market in bookmaker.get('markets', []):
+                    if market.get('key') != 'h2h':
+                        continue
+                    for outcome in market.get('outcomes', []):
+                        name = outcome.get('name')
+                        price = outcome.get('price')
+                        if not name or not price:
+                            continue
+                        if name not in outcomes or price > outcomes[name]['price']:
+                            outcomes[name] = {
+                                'price': price,
+                                'bookmaker': bookmaker.get('title', 'Unknown')
+                            }
+
+            if len(outcomes) != 2:
+                continue
+
             inv_sum = sum(1 / outcome['price'] for outcome in outcomes.values())
             if inv_sum < 1:
                 arb_margin = (1 - inv_sum) * 100
@@ -63,6 +80,9 @@ def find_arbs(odds_data):
                     'Bookie 2': list(outcomes.values())[1]['bookmaker'],
                     'Arb Margin (%)': round(arb_margin, 2)
                 })
+        except Exception as e:
+            st.warning(f"Skipped a match due to error: {e}")
+            continue
     return arbs
 
 # === Streamlit UI ===
