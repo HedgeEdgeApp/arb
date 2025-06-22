@@ -6,7 +6,7 @@ import pandas as pd
 
 # === Configuration ===
 API_KEY = st.secrets["API_KEY"]  # Stored securely in Streamlit Cloud
-REGION = 'eu'
+REGION = 'us,uk,eu,au'
 MARKET = 'h2h'
 ODDS_FORMAT = 'decimal'
 
