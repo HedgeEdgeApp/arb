@@ -37,6 +37,7 @@ def find_arbs(odds_data):
     arbs = []
     for event in odds_data:
         outcomes = {}
+        team_names = event.get('teams') or event.get('home_team', '') + ' vs ' + event.get('away_team', '')
         for bookmaker in event.get('bookmakers', []):
             for market in bookmaker.get('markets', []):
                 if market['key'] != 'h2h':
@@ -53,7 +54,7 @@ def find_arbs(odds_data):
             if inv_sum < 1:
                 arb_margin = (1 - inv_sum) * 100
                 arbs.append({
-                    'Match': ' vs '.join(event['teams']),
+                    'Match': team_names,
                     'Team 1': list(outcomes.keys())[0],
                     'Odds 1': list(outcomes.values())[0]['price'],
                     'Bookie 1': list(outcomes.values())[0]['bookmaker'],
