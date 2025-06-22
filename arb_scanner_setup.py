@@ -118,13 +118,18 @@ if st.button("🔍 Scan ALL Sports for Arbitrage Opportunities"):
         sports = fetch_all_sports()
         all_arbs = []
         raw_odds_summary = []
+        event_count_by_sport = {}
 
         for sport in sports:
             odds_data = fetch_odds_for_sport(sport['key'])
+            event_count_by_sport[sport['title']] = len(odds_data)
             raw_odds_summary.extend(odds_data)
             arbs = find_arbs(odds_data, sport.get('title', sport['key']))
             filtered = [a for a in arbs if a['Arb Margin (%)'] >= min_margin]
             all_arbs.extend(filtered)
+
+        st.markdown("### 📊 Event Count by Sport")
+        st.json(event_count_by_sport)
 
         if show_raw:
             st.subheader("📦 Raw Odds Data")
@@ -143,4 +148,3 @@ if st.button("🔍 Scan ALL Sports for Arbitrage Opportunities"):
                 df.drop(columns=['Highlight']).style.apply(highlight_live, axis=1),
                 use_container_width=True
             )
- 
